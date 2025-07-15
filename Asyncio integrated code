@@ -1,0 +1,92 @@
+import asyncio
+import os
+import string
+import random
+
+# ✅ Character Set
+uppercase = string.ascii_uppercase
+lowercase = string.ascii_lowercase
+numbers = "0123456789"
+symbols = "!@#%&*$£€¥"
+CHAR_SET = uppercase + lowercase + numbers + symbols
+
+# ✅ Settings
+MIN_LEN = 4
+MAX_LEN = 5
+CHUNK_SIZE = 10000
+OUTPUT_FILE = "smart-bruteforce-wordlist-async.txt"
+RESUME_FILE = "resume-checkpoint-async.txt"
+
+# 🔁 Resume helpers
+def get_resume_index(length):
+    if not os.path.exists(RESUME_FILE):
+        return 0
+    with open(RESUME_FILE, "r") as r:
+        for line in r:
+            l, idx = line.strip().split(":")
+            if int(l) == length:
+                return int(idx)
+    return 0
+
+def update_resume_index(length, index):
+    lines = {}
+    if os.path.exists(RESUME_FILE):
+        with open(RESUME_FILE, "r") as r:
+            for line in r:
+                l, idx = line.strip().split(":")
+                lines[int(l)] = int(idx)
+    lines[length] = index
+    with open(RESUME_FILE, "w") as w:
+        for l in sorted(lines):
+            w.write(f"{l}:{lines[l]}\n")
+
+# 🔧 Password generator
+def generate_passwords(length, start, end):
+    chars = CHAR_SET
+    passwords = []
+    total = len(chars) ** length
+    for idx in range(start, min(end, total)):
+        combo = []
+        n = idx
+        for _ in range(length):
+            n, r = divmod(n, len(chars))
+            combo.append(chars[r])
+        passwords.append("".join(reversed(combo)))
+    random.shuffle(passwords)
+    return passwords
+
+# 🔧 Async worker
+async def worker(length, start, end, queue):
+    loop = asyncio.get_event_loop()
+    passwords = await loop.run_in_executor(None, generate_passwords, length, start, end)
+    await queue.put(passwords)
+
+# ✅ Main async function
+async def generate_wordlist():
+    print(f"\n[⚙️ ] Starting smart brute-force with async + resume support")
+    print(f"[🔐] Charset: {CHAR_SET}")
+    print(f"[📁] Output: {OUTPUT_FILE}")
+    print(f"[💾] Resume file: {RESUME_FILE}\n")
+
+    with open(OUTPUT_FILE, "a") as f:
+        for length in range(MIN_LEN, MAX_LEN + 1):
+            total = len(CHAR_SET) ** length
+            print(f"[🔎] Processing length {length} (total: {total})")
+            resume_index = get_resume_index(length)
+            print(f"    ↪️ Resuming from index {resume_index}")
+            for start in range(resume_index, total, CHUNK_SIZE):
+                end = min(start + CHUNK_SIZE, total)
+                queue = asyncio.Queue()
+                task = asyncio.create_task(worker(length, start, end, queue))
+                await task
+                passwords = await queue.get()
+                for p in passwords:
+                    f.write(p + "\n")
+                update_resume_index(length, start + CHUNK_SIZE)
+                print(f"    ✅ Progress saved at index {start + CHUNK_SIZE}")
+
+    print(f"\n✅ Wordlist पूर्ण तयार झाली: {OUTPUT_FILE}")
+
+# 👉 Run
+if __name__ == "__main__":
+    asyncio.run(generate_wordlist())
